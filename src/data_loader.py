@@ -1,50 +1,75 @@
-"""Load and clean Jeff Sackmann ATP match data (atp_matches_YYYY.csv files)."""
+# This line is a docstring: a short description of what this whole file (module) does.
+"""Load and clean ATP match data (YYYY.csv season files) into one dataframe."""
 
+# This import makes type hints like "list[Path] | None" work even on older Python versions.
 from __future__ import annotations
 
+# The logging module lets us print organized status messages instead of plain print() calls.
 import logging
+# Path is a modern, object-oriented way to work with file/folder paths.
 from pathlib import Path
 
+# numpy is imported for numerical operations (not used heavily yet, but will be for Elo math).
 import numpy as np
+# pandas is the core library for loading and manipulating tabular data (dataframes).
 import pandas as pd
 
+# Configure the logging system once: show INFO-level messages, formatted as plain text.
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+# Create a logger object specific to this file, so log messages can be traced to their source.
 logger = logging.getLogger(__name__)
 
+# Comment block explaining why this constant exists before we define it.
 # Columns we expect a raw match file to have. Used to fail loudly if the
 # source schema changes instead of silently loading a misaligned dataframe.
 # Note: this dataset (not the raw Sackmann tennis_atp repo directly, but a
 # same-schema derivative) uses alphanumeric winner_id/loser_id (e.g. "GH92")
 # rather than Sackmann's numeric player IDs, and adds an "indoor" column.
+# EXPECTED_COLUMNS is a list of every column name our source CSVs must contain.
 EXPECTED_COLUMNS = [
+    # Tournament-level identifiers and metadata.
     "tourney_id", "tourney_name", "surface", "draw_size", "tourney_level",
     "indoor", "tourney_date", "match_num",
+    # Everything describing the winner of the match.
     "winner_id", "winner_seed", "winner_entry", "winner_name", "winner_hand",
     "winner_ht", "winner_ioc", "winner_age",
+    # Everything describing the loser of the match.
     "loser_id", "loser_seed", "loser_entry", "loser_name", "loser_hand",
     "loser_ht", "loser_ioc", "loser_age",
+    # The match result itself: final score, format, round reached, duration.
     "score", "best_of", "round", "minutes",
+    # Winner's serve/return statistics for this match (aces, double faults, etc).
     "w_ace", "w_df", "w_svpt", "w_1stIn", "w_1stWon", "w_2ndWon", "w_SvGms",
     "w_bpSaved", "w_bpFaced",
+    # Loser's serve/return statistics for this match, mirroring the winner's.
     "l_ace", "l_df", "l_svpt", "l_1stIn", "l_1stWon", "l_2ndWon", "l_SvGms",
     "l_bpSaved", "l_bpFaced",
+    # World ranking and ranking points for both players at match time.
     "winner_rank", "winner_rank_points", "loser_rank", "loser_rank_points",
 ]
 
+# Comment explaining why STAT_COLUMNS is split out as its own list.
 # Serve/return stat columns are only populated from ~1991 onward and are
 # frequently missing even within our 2010+ window (mostly Davis Cup ties
 # and a handful of early-round matches at smaller events).
+# STAT_COLUMNS holds just the point-by-point statistic columns (a subset of EXPECTED_COLUMNS).
 STAT_COLUMNS = [
+    # Winner's per-match serve/return counts.
     "w_ace", "w_df", "w_svpt", "w_1stIn", "w_1stWon", "w_2ndWon", "w_SvGms",
     "w_bpSaved", "w_bpFaced",
+    # Loser's per-match serve/return counts.
     "l_ace", "l_df", "l_svpt", "l_1stIn", "l_1stWon", "l_2ndWon", "l_SvGms",
     "l_bpSaved", "l_bpFaced",
 ]
 
 
+# def starts a function definition. This function is named find_match_files.
+# It takes three inputs (parameters): where to look, and an optional year range.
+# "-> list[Path]" tells readers/tools this function will hand back a list of file paths.
 def find_match_files(
     raw_dir: Path, start_year: int = 2010, end_year: int | None = None
 ) -> list[Path]:
+    # A docstring: describes what this function does, for anyone (including future you) reading it.
     """Return sorted main-tour YYYY.csv paths in raw_dir within [start_year, end_year].
 
     The glob "[0-9]" x4 + ".csv" matches "2023.csv" but NOT "2023_challenger.csv",
@@ -56,46 +81,82 @@ def find_match_files(
     pipeline automatically pick up new seasons dropped into data/raw
     without code changes.
     """
+    # raw_dir.glob(...) searches the folder for filenames matching a pattern and returns them.
+    # "[0-9][0-9][0-9][0-9].csv" means "exactly 4 digits, then .csv" — i.e. "2023.csv", not "2023_challenger.csv".
+    # sorted(...) puts the results in order (alphabetical, which for 4-digit years means chronological).
     files = sorted(raw_dir.glob("[0-9][0-9][0-9][0-9].csv"))
+    # Start an empty list that we'll fill with only the files inside our year range.
     selected = []
+    # Loop over every file we found, one at a time, calling the current one "f".
     for f in files:
+        # f.stem is the filename without its extension, e.g. "2023" from "2023.csv".
+        # int(...) converts that text "2023" into the actual number 2023 so we can compare it.
         year = int(f.stem)
+        # If this file's year is earlier than the start_year we asked for, skip it.
         if year < start_year:
+            # "continue" jumps straight to the next loop iteration, skipping the rest of this one.
             continue
+        # If an end_year was given AND this file's year is past it, skip it too.
         if end_year is not None and year > end_year:
             continue
+        # This file passed both checks, so add it to our results list.
         selected.append(f)
+    # After checking every file, if we found nothing at all in range...
     if not selected:
+        # ...raise an error immediately instead of silently returning an empty list.
+        # An f-string (the "f" before the quotes) lets us insert variables directly into the message.
         raise FileNotFoundError(
             f"No YYYY.csv main-tour files found in {raw_dir} "
             f"for years >= {start_year}. Did you copy the season CSVs "
             f"into data/raw?"
         )
+    # Hand back the final filtered, sorted list of file paths to whoever called this function.
     return selected
 
 
+# This function takes the same location/year inputs as find_match_files,
+# but returns a pandas DataFrame (a table) instead of a list of file paths.
 def load_matches(
     raw_dir: Path, start_year: int = 2010, end_year: int | None = None
 ) -> pd.DataFrame:
+    # Docstring explaining the function's purpose and a design choice.
     """Read every matching atp_matches_YYYY.csv and concatenate into one DataFrame.
 
     Each file is one ATP season. We read them individually (rather than one
     big glob-read) so we can tag each row with its source file and catch a
     malformed year file without losing the traceback for which file broke.
     """
+    # Reuse the function we just wrote to get the filtered, sorted list of files.
     files = find_match_files(raw_dir, start_year, end_year)
+    # Start an empty list — we'll put one small table (one per file) into it.
     frames = []
+    # Loop through each file path we got back.
     for f in files:
+        # pd.read_csv reads one CSV file into a DataFrame (pandas' table object).
+        # low_memory=False tells pandas to scan the whole file before guessing column types,
+        # which avoids a warning/bug where a column looks like numbers in some rows and text in others.
         df = pd.read_csv(f, low_memory=False)
+        # set(...) converts a list into a "set" — a collection with no duplicates, good for comparisons.
+        # This line asks: "which columns does EXPECTED_COLUMNS have that this file's df does NOT have?"
         missing = set(EXPECTED_COLUMNS) - set(df.columns)
+        # If that difference is non-empty, something is wrong with this file's structure.
         if missing:
+            # Stop immediately with a clear error naming the file and exactly which columns are missing.
             raise ValueError(f"{f.name} is missing expected columns: {sorted(missing)}")
+        # Add a new column to this table recording which file each row came from — useful for debugging later.
         df["source_file"] = f.name
+        # Add this file's table to our running list of tables.
         frames.append(df)
+        # Print a status line so we can watch progress while the script runs.
+        # The ":," inside the f-string formats the number with comma thousands separators (e.g. 3,030).
         logger.info(f"  loaded {f.name}: {len(df):,} rows")
 
+    # pd.concat stacks all the individual season tables into one big table, one on top of another.
+    # ignore_index=True renumbers the rows 0, 1, 2, ... instead of keeping each file's original row numbers.
     combined = pd.concat(frames, ignore_index=True)
+    # Log a summary of how many files and rows were combined.
     logger.info(f"Combined {len(files)} files into {len(combined):,} total rows")
+    # Return the single combined table to whoever called this function.
     return combined
 
 
