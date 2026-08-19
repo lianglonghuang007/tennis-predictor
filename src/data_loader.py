@@ -119,8 +119,8 @@ def clean_matches(df: pd.DataFrame) -> pd.DataFrame:
     # winner_id/loser_id are NOT included here: in this dataset they're
     # alphanumeric player codes (e.g. "GH92"), not Sackmann's numeric IDs.
     numeric_cols = [
-        "draw_size", "match_num", "winner_ht", "winner_age",
-        "loser_ht", "loser_age", "best_of", "minutes",
+        "draw_size", "match_num", "winner_seed", "winner_ht", "winner_age",
+        "loser_seed", "loser_ht", "loser_age", "best_of", "minutes",
         "winner_rank", "winner_rank_points", "loser_rank", "loser_rank_points",
     ] + STAT_COLUMNS
     for col in numeric_cols:
