@@ -4,9 +4,9 @@ Predicts ATP match win probabilities from historical match data. Surface-specifi
 engineered form features feed a Bradley-Terry baseline and a LightGBM model; a separate analytical
 Markov chain engine converts a per-point win probability into game/set/match probabilities.
 
-**Status:** data pipeline, feature engineering, both models, and the Markov engine are complete.
-FastAPI backend, SQLite storage, a React frontend, and bookmaker-odds benchmarking are planned but
-not yet built.
+**Status:** data pipeline, feature engineering, both models, and the Markov chain + Monte Carlo
+engines are complete, and both models are trained and persisted for serving. FastAPI backend,
+SQLite storage, a React frontend, and bookmaker-odds benchmarking are planned but not yet built.
 
 **Stack:** Python, pandas, numpy, scikit-learn, LightGBM, Optuna, SHAP, matplotlib.
 
@@ -145,6 +145,33 @@ alternating tiebreak service, best-of-3/5).
 - `prob_win_match` — combines set probabilities via the standard best-of-N series formula; verified
   that best-of-5 amplifies a stronger player's edge more than best-of-3 does, matching the real
   reason Grand Slam finals are played best-of-5.
+
+`prob_win_tiebreak` is computed via bottom-up dynamic programming rather than recursion — a "win by
+2" tiebreak has no upper bound on how long two evenly-matched players can stay tied, and plain
+recursion (even memoized) can exceed Python's call-stack depth on that tail. An explicit table,
+filled in order, computes the same values with no call stack to overflow.
+
+## Simulation Engine (Monte Carlo)
+
+**Code:** [`src/engine/monte_carlo.py`](src/engine/monte_carlo.py)
+
+Point-by-point match simulation for path-dependent metrics the analytical engine can't produce
+directly — e.g. the probability of a match going the distance, or of a straight-sets win, not just
+who wins overall. Shares `markov.py`'s serve-alternation logic directly (one definition of the
+scoring rules, not two copies that could quietly drift apart).
+
+Cross-validated against the analytical engine: simulated win probabilities converge to
+`prob_win_match`'s exact values within ~0.3 percentage points at 20,000 simulations, across
+multiple test cases — two independent computational approaches agreeing is strong evidence both
+are correct.
+
+## Serving
+
+**Code:** [`scripts/train_models.py`](scripts/train_models.py)
+
+Both models are trained on the full dataset (train/val/test split is for evaluation only — the
+deployed model uses all available data) and persisted to `models/` via `joblib`, so an eventual API
+loads an already-trained model rather than retraining per request.
 
 ## Setup
 
