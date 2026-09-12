@@ -27,33 +27,21 @@ def _decayed_rating(
     return initial_rating + (rating - initial_rating) * decay_factor
 
 
-def compute_elo_ratings(
-    df: pd.DataFrame,
-    initial_rating: float = 1500.0,
-    k: float = 32.0,
-    half_life_days: float = 180.0,
-) -> pd.DataFrame:
-    """Add winner_elo_pre / loser_elo_pre columns: each player's surface Elo rating going INTO the match.
+def _run_elo_walk(
+    df: pd.DataFrame, initial_rating: float, k: float, half_life_days: float
+) -> tuple[list[float], list[float], dict[tuple, tuple[float, pd.Timestamp]]]:
+    """Walk matches chronologically, updating Elo ratings; return each row's pre-match ratings
+    AND the final ratings dict.
 
-    df must already be sorted chronologically (clean_matches guarantees this).
-    Ratings are updated match-by-match in date order, so a match's "_pre"
-    rating always reflects only information available before that match was
-    played — this is what makes the feature safe to train on without leaking
-    the future.
-
-    Walkover matches (df["is_walkover"]) are skipped for rating UPDATES — no
-    tennis was actually played — but a pre-match rating is still recorded for
-    that row so every row has a value.
+    Factored out of compute_elo_ratings so the training-time per-row output
+    and a "current state" snapshot (used for live predictions, not present
+    yet in this file) can share one implementation of the actual Elo math,
+    instead of two copies that could quietly drift out of sync.
     """
-    df = df.copy()
-
-    # (player_id, surface) -> (current_rating, date_of_last_match_on_that_surface).
     ratings: dict[tuple, tuple[float, pd.Timestamp]] = {}
+    winner_elo_pre: list[float] = []
+    loser_elo_pre: list[float] = []
 
-    winner_elo_pre = []
-    loser_elo_pre = []
-
-    # itertuples() is much faster than iterrows() for a loop this size (~47k rows).
     for row in df.itertuples():
         surface = row.surface if pd.notna(row.surface) else UNKNOWN_SURFACE
         date = row.tourney_date
@@ -82,7 +70,49 @@ def compute_elo_ratings(
         ratings[winner_key] = (new_winner_rating, date)
         ratings[loser_key] = (new_loser_rating, date)
 
+    return winner_elo_pre, loser_elo_pre, ratings
+
+
+def compute_elo_ratings(
+    df: pd.DataFrame,
+    initial_rating: float = 1500.0,
+    k: float = 32.0,
+    half_life_days: float = 180.0,
+) -> pd.DataFrame:
+    """Add winner_elo_pre / loser_elo_pre columns: each player's surface Elo rating going INTO the match.
+
+    df must already be sorted chronologically (clean_matches guarantees this).
+    Ratings are updated match-by-match in date order, so a match's "_pre"
+    rating always reflects only information available before that match was
+    played — this is what makes the feature safe to train on without leaking
+    the future.
+
+    Walkover matches (df["is_walkover"]) are skipped for rating UPDATES — no
+    tennis was actually played — but a pre-match rating is still recorded for
+    that row so every row has a value.
+    """
+    df = df.copy()
+    winner_elo_pre, loser_elo_pre, _ = _run_elo_walk(df, initial_rating, k, half_life_days)
     df["winner_elo_pre"] = winner_elo_pre
     df["loser_elo_pre"] = loser_elo_pre
-
     return df
+
+
+def current_elo_ratings(
+    df: pd.DataFrame,
+    initial_rating: float = 1500.0,
+    k: float = 32.0,
+    half_life_days: float = 180.0,
+) -> pd.DataFrame:
+    """Each player's surface Elo rating AS OF RIGHT NOW — after their last known match, not before it.
+
+    A live prediction for a hypothetical upcoming match needs "what is this
+    player's rating today," which is the FINAL state of the same walk
+    compute_elo_ratings already does, not any row's pre-match value.
+    """
+    _, _, ratings = _run_elo_walk(df, initial_rating, k, half_life_days)
+    rows = [
+        {"player_id": player_id, "surface": surface, "elo": rating}
+        for (player_id, surface), (rating, _last_date) in ratings.items()
+    ]
+    return pd.DataFrame(rows)
