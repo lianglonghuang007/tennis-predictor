@@ -67,6 +67,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
             player_id TEXT NOT NULL REFERENCES players(player_id),
             surface   TEXT NOT NULL,
             elo       REAL NOT NULL,
+            -- Date of the last rated match on this surface; NULL for the
+            -- walkover-only fallback rows that were never rated.
+            elo_last_date TEXT,
             {rolling_column_defs},
             PRIMARY KEY (player_id, surface)
         );
@@ -98,6 +101,7 @@ def load_database(conn: sqlite3.Connection, df: pd.DataFrame) -> dict[str, int]:
     player_surface_stats = player_surface_stats.dropna(subset=["player_id"])
     # SQLite has no date type; ISO-format text sorts and compares correctly.
     players["last_match_date"] = players["last_match_date"].dt.strftime("%Y-%m-%d")
+    player_surface_stats["elo_last_date"] = player_surface_stats["elo_last_date"].dt.strftime("%Y-%m-%d")
 
     matches = df[["tourney_date", "surface", "winner_id", "loser_id"]].dropna(
         subset=["winner_id", "loser_id"]

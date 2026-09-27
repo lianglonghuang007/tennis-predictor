@@ -8,7 +8,6 @@ import lightgbm as lgb
 import numpy as np
 import optuna
 import pandas as pd
-import shap
 from sklearn.metrics import brier_score_loss
 from sklearn.model_selection import TimeSeriesSplit
 
@@ -126,6 +125,10 @@ def compute_shap_importance(model: lgb.LGBMClassifier, df: pd.DataFrame) -> pd.D
     feature can be split on rarely but still matter a lot whenever it IS
     used, and SHAP captures that; a raw split-count doesn't.
     """
+    # Imported here rather than at module level: shap pulls in matplotlib and
+    # is only needed for analysis, not by the API that imports this module.
+    import shap
+
     X, feature_cols = select_features(df)
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X)

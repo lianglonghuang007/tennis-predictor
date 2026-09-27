@@ -10,13 +10,14 @@ import pandas as pd
 UNKNOWN_SURFACE = "Unknown"
 
 
-def _decayed_rating(
-    ratings: dict, key: tuple, current_date: pd.Timestamp, initial_rating: float, half_life_days: float
+def decay_rating(
+    rating: float,
+    last_date: pd.Timestamp,
+    current_date: pd.Timestamp,
+    initial_rating: float = 1500.0,
+    half_life_days: float = 180.0,
 ) -> float:
-    """Look up a player-surface's current rating, decayed toward the mean for time since their last match."""
-    if key not in ratings:
-        return initial_rating
-    rating, last_date = ratings[key]
+    """Pull a rating back toward the mean for time elapsed since it was last updated."""
     days_inactive = (current_date - last_date).days
     if days_inactive <= 0:
         return rating
@@ -25,6 +26,16 @@ def _decayed_rating(
     # rating back toward "average" instead of carrying full weight forever.
     decay_factor = 0.5 ** (days_inactive / half_life_days)
     return initial_rating + (rating - initial_rating) * decay_factor
+
+
+def _decayed_rating(
+    ratings: dict, key: tuple, current_date: pd.Timestamp, initial_rating: float, half_life_days: float
+) -> float:
+    """Look up a player-surface's current rating, decayed toward the mean for time since their last match."""
+    if key not in ratings:
+        return initial_rating
+    rating, last_date = ratings[key]
+    return decay_rating(rating, last_date, current_date, initial_rating, half_life_days)
 
 
 def _run_elo_walk(
@@ -104,15 +115,17 @@ def current_elo_ratings(
     k: float = 32.0,
     half_life_days: float = 180.0,
 ) -> pd.DataFrame:
-    """Each player's surface Elo rating AS OF RIGHT NOW — after their last known match, not before it.
+    """Each player's surface Elo rating after their last known match, not before it.
 
     A live prediction for a hypothetical upcoming match needs "what is this
     player's rating today," which is the FINAL state of the same walk
     compute_elo_ratings already does, not any row's pre-match value.
+    elo_last_date is returned alongside so the caller can apply decay_rating
+    up to the prediction date, exactly as the walk does before each match.
     """
     _, _, ratings = _run_elo_walk(df, initial_rating, k, half_life_days)
     rows = [
-        {"player_id": player_id, "surface": surface, "elo": rating}
-        for (player_id, surface), (rating, _last_date) in ratings.items()
+        {"player_id": player_id, "surface": surface, "elo": rating, "elo_last_date": last_date}
+        for (player_id, surface), (rating, last_date) in ratings.items()
     ]
     return pd.DataFrame(rows)
