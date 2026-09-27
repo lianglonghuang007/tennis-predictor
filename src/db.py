@@ -10,8 +10,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pandas as pd
+
+from src.features.elo import UNKNOWN_SURFACE
 from src.features.rolling_stats import ROLLING_STAT_NAMES
-from src.features.snapshot import ROLLING_WINDOWS
+from src.features.snapshot import ROLLING_WINDOWS, build_player_snapshots
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "tennis.db"
 
@@ -71,3 +74,36 @@ def create_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX idx_matches_pair ON matches (winner_id, loser_id);
     """)
     conn.commit()
+
+
+def load_database(conn: sqlite3.Connection, df: pd.DataFrame) -> dict[str, int]:
+    """Fill the (already created) tables from the cleaned match DataFrame. Returns row counts per table.
+
+    Rows with a missing player_id are skipped: the source data has a handful
+    of matches with a blank winner/loser id, and a row with no id can't be
+    looked up or referenced by anything.
+    """
+    players, player_surface_stats = build_player_snapshots(df)
+    players = players.dropna(subset=["player_id"])
+    player_surface_stats = player_surface_stats.dropna(subset=["player_id"])
+    # SQLite has no date type; ISO-format text sorts and compares correctly.
+    players["last_match_date"] = players["last_match_date"].dt.strftime("%Y-%m-%d")
+
+    matches = df[["tourney_date", "surface", "winner_id", "loser_id"]].dropna(
+        subset=["winner_id", "loser_id"]
+    )
+    matches["tourney_date"] = matches["tourney_date"].dt.strftime("%Y-%m-%d")
+    # Same bucketing as the training-time H2H feature, so a live H2H lookup
+    # counts exactly the matches the model saw counted during training.
+    matches["surface"] = matches["surface"].fillna(UNKNOWN_SURFACE)
+
+    tables = {
+        "players": players,
+        "player_surface_stats": player_surface_stats,
+        "matches": matches,
+    }
+    # Order matters: players must exist before rows that reference them.
+    for table, frame in tables.items():
+        frame.to_sql(table, conn, if_exists="append", index=False)
+    conn.commit()
+    return {table: len(frame) for table, frame in tables.items()}
