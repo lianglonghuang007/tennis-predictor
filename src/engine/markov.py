@@ -78,8 +78,8 @@ def prob_win_tiebreak(
     max_score = target + max_extra_points
     values: dict[tuple[int, int], float] = {}
 
-    # Fill in order of DECREASING total points played, so that by the time we
-    # compute values[(a, b)], both values[(a + 1, b)] and values[(a, b + 1)]
+    # Fill in order of DECREASING total points played, so that by the time
+    # values[(a, b)] is computed, both values[(a + 1, b)] and values[(a, b + 1)]
     # — which it depends on — already exist in the table.
     for total in range(2 * max_score, -1, -1):
         lo = max(0, total - max_score)

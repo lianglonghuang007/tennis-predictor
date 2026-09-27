@@ -31,7 +31,7 @@ EXPECTED_COLUMNS = [
 ]
 
 # Split out separately because these columns are only populated from ~1991
-# onward and are frequently missing even within our 2010+ window (mostly
+# onward and are frequently missing even within the 2010+ window (mostly
 # Davis Cup ties and early rounds at smaller events).
 STAT_COLUMNS = [
     "w_ace", "w_df", "w_svpt", "w_1stIn", "w_1stWon", "w_2ndWon", "w_SvGms",
@@ -48,8 +48,8 @@ def find_match_files(
 
     The glob "[0-9]" x4 + ".csv" matches "2023.csv" but NOT "2023_challenger.csv",
     "ATP_Database.csv", or "ongoing_tourneys.csv" — those other files are also
-    in data/raw but aren't ATP main-tour season files, so we deliberately
-    exclude them here rather than filtering them out later.
+    in data/raw but aren't ATP main-tour season files, so they're deliberately
+    excluded here rather than filtering them out later.
 
     end_year defaults to None, meaning "no upper bound" — this lets the
     pipeline automatically pick up new seasons dropped into data/raw
@@ -78,8 +78,8 @@ def load_matches(
 ) -> pd.DataFrame:
     """Read every matching atp_matches_YYYY.csv and concatenate into one DataFrame.
 
-    Each file is one ATP season. We read them individually (rather than one
-    big glob-read) so we can tag each row with its source file and catch a
+    Each file is one ATP season. Files are read individually (rather than one
+    big glob-read) so each row can be tagged with its source file and catch a
     malformed year file without losing the traceback for which file broke.
     """
     files = find_match_files(raw_dir, start_year, end_year)
@@ -251,7 +251,7 @@ def flag_data_quality_issues(df: pd.DataFrame) -> dict:
 def add_quality_flags(df: pd.DataFrame) -> pd.DataFrame:
     """Attach boolean quality-flag columns instead of dropping/imputing rows.
 
-    We deliberately don't resolve these issues here: whether a retirement
+    These issues are deliberately not resolved here: whether a retirement
     should be excluded is an Elo-vs-LightGBM decision, not a data-cleaning
     one, so each downstream consumer filters on these flags itself instead
     of the flags being baked silently into which rows even exist.

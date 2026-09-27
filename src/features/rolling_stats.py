@@ -7,7 +7,7 @@ import pandas as pd
 # Reused from elo.py so a missing surface is bucketed the same way everywhere.
 from src.features.elo import UNKNOWN_SURFACE
 
-# The four per-match stats we track a rolling trailing average of. Each is a
+# The four per-match stats tracked as rolling trailing averages. Each is a
 # rate (0 to 1), so averaging them across matches is meaningful.
 ROLLING_STAT_NAMES = ["serve_win_pct", "return_win_pct", "bp_conversion", "bp_saved_pct"]
 
