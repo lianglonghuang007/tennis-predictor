@@ -101,6 +101,29 @@ def load_matches(
     return combined
 
 
+def _backfill_missing_player_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill a blank winner_id/loser_id from the player's name, when that name maps to exactly one id.
+
+    The source has a few recent matches with a blank id but a known name. A
+    name shared by two different players (e.g. "Harshana Godamanna") is left
+    blank rather than guessed; so is a name that never appears with an id.
+    """
+    names = pd.concat([df["winner_name"], df["loser_name"]], ignore_index=True)
+    ids = pd.concat([df["winner_id"], df["loser_id"]], ignore_index=True)
+    known = pd.DataFrame({"name": names, "id": ids}).dropna().drop_duplicates()
+    unambiguous = known[~known["name"].duplicated(keep=False)]
+    name_to_id = unambiguous.set_index("name")["id"]
+
+    for side in ("winner", "loser"):
+        missing = df[f"{side}_id"].isna()
+        df.loc[missing, f"{side}_id"] = df.loc[missing, f"{side}_name"].map(name_to_id)
+
+    n_remaining = int(df["winner_id"].isna().sum() + df["loser_id"].isna().sum())
+    if n_remaining:
+        logger.info(f"{n_remaining} player id(s) still missing after name backfill")
+    return df
+
+
 def clean_matches(df: pd.DataFrame) -> pd.DataFrame:
     """Apply light, non-destructive cleaning to a combined matches DataFrame.
 
@@ -126,6 +149,8 @@ def clean_matches(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    df = _backfill_missing_player_ids(df)
+
     before = len(df)
     df = df.drop_duplicates()
     n_dropped = before - len(df)
@@ -144,7 +169,7 @@ def summarize_data(df: pd.DataFrame) -> dict:
     Returns a dict (rather than just printing) so downstream code — or a
     test — can assert on the numbers instead of scraping stdout.
     """
-    n_players = pd.unique(pd.concat([df["winner_id"], df["loser_id"]])).shape[0]
+    n_players = pd.concat([df["winner_id"], df["loser_id"]]).nunique()
     matches_by_surface = df["surface"].value_counts(dropna=False)
     missing_counts = df.isna().sum().sort_values(ascending=False)
 

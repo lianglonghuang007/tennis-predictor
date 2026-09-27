@@ -25,7 +25,8 @@ below).
 - `load_matches` — reads and concatenates season files, validating columns against the expected
   schema so a source format change fails loudly instead of silently misaligning data.
 - `clean_matches` — parses tournament dates, coerces numeric columns, drops exact duplicate rows,
-  sorts chronologically. Deliberately minimal: doesn't drop or impute anything that a downstream
+  sorts chronologically. Blank player ids are backfilled
+  from the player's name when that name belongs to exactly one id. Deliberately minimal: doesn't drop or impute anything that a downstream
   model might want to treat differently.
 - `add_quality_flags` — attaches boolean columns (`is_retirement`, `is_walkover`, `is_default`,
   `is_incomplete_match`, `has_serve_stats`, `has_match_num`) instead of resolving quality issues
@@ -35,7 +36,7 @@ below).
 - `summarize_data` / `flag_data_quality_issues` — print + return summary stats and quality checks.
 
 **Output:** `data/processed/atp_matches_combined.csv` — 47,398 matches, 2010-01-03 to
-2026-07-19, 1,778 unique players.
+2026-07-19, 1,777 unique players.
 
 **Data quality findings (2010–present):**
 
@@ -47,6 +48,7 @@ below).
 | Missing surface | 143 | Flagged via `surface.isna()`; excluded from surface-specific Elo |
 | Missing all serve/return stats | 3,002 (6.3%) | Flagged (`has_serve_stats`); mostly Davis Cup ties and early rounds at smaller events |
 | Missing winner/loser rank | 314 / 787 | Left as NaN — not imputable with 0 |
+| Missing winner/loser id | 2 | Backfilled from the player's name where the name maps to exactly one id; 1 remains (a player with no id anywhere in the source) |
 | Missing `match_num` | 489 | 10 recent (2025–2026) tournaments not yet backfilled by the data source |
 | Duplicate `(tourney_id, match_num)` | 2 | **Data bug in the source**: `tourney_id "2026-416"` is reused for both the Munich and Rome Masters 2026 events. Requires a synthetic tournament key before any per-tournament join. |
 
