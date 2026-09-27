@@ -23,9 +23,19 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "tennis.db"
 ROLLING_COLUMNS = [f"{stat}_last{w}" for stat in ROLLING_STAT_NAMES for w in ROLLING_WINDOWS]
 
 
-def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    """Open a connection with foreign-key enforcement on and rows readable by column name."""
-    conn = sqlite3.connect(db_path)
+def get_connection(db_path: Path = DB_PATH, read_only: bool = False) -> sqlite3.Connection:
+    """Open a connection with foreign-key enforcement on and rows readable by column name.
+
+    read_only=True is for the API: it fails loudly if the file doesn't exist,
+    instead of sqlite3's default of silently creating a new empty database.
+    """
+    if read_only:
+        # FastAPI may open the connection and run the endpoint on different
+        # worker threads; each connection still serves only one request at a
+        # time, so disabling sqlite3's same-thread check is safe here.
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
+    else:
+        conn = sqlite3.connect(db_path)
     # SQLite ships with foreign-key checks OFF for backwards compatibility,
     # and the setting is per-connection, so it has to be turned on every time.
     conn.execute("PRAGMA foreign_keys = ON")
