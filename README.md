@@ -4,11 +4,12 @@ Predicts ATP match win probabilities from historical match data. Surface-specifi
 engineered form features feed a Bradley-Terry baseline and a LightGBM model; a separate analytical
 Markov chain engine converts a per-point win probability into game/set/match probabilities.
 
-**Status:** data pipeline, feature engineering, both models, and the Markov chain + Monte Carlo
-engines are complete, and both models are trained and persisted for serving. FastAPI backend,
-SQLite storage, a React frontend, and bookmaker-odds benchmarking are planned but not yet built.
+**Status:** data pipeline, feature engineering, both models, the Markov chain + Monte Carlo
+engines, SQLite storage, and a FastAPI backend serving live predictions are complete. A React
+frontend, deployment, and bookmaker-odds benchmarking are planned but not yet built.
 
-**Stack:** Python, pandas, numpy, scikit-learn, LightGBM, Optuna, SHAP, matplotlib.
+**Stack:** Python, pandas, numpy, scikit-learn, LightGBM, Optuna, SHAP, matplotlib, SQLite,
+FastAPI.
 
 ## Data Pipeline
 
@@ -25,9 +26,9 @@ below).
 - `load_matches` — reads and concatenates season files, validating columns against the expected
   schema so a source format change fails loudly instead of silently misaligning data.
 - `clean_matches` — parses tournament dates, coerces numeric columns, drops exact duplicate rows,
-  sorts chronologically. Blank player ids are backfilled
-  from the player's name when that name belongs to exactly one id. Deliberately minimal: doesn't drop or impute anything that a downstream
-  model might want to treat differently.
+  sorts chronologically, and backfills blank player ids from the player's name when that name
+  belongs to exactly one id. Deliberately minimal: doesn't drop or impute anything that a
+  downstream model might want to treat differently.
 - `add_quality_flags` — attaches boolean columns (`is_retirement`, `is_walkover`, `is_default`,
   `is_incomplete_match`, `has_serve_stats`, `has_match_num`) instead of resolving quality issues
   in the base dataset. Whether to exclude a retirement, for example, is a modeling decision (Elo
@@ -175,6 +176,70 @@ Both models are trained on the full dataset (train/val/test split is for evaluat
 deployed model uses all available data) and persisted to `models/` via `joblib`, so an eventual API
 loads an already-trained model rather than retraining per request.
 
+## Database
+
+**Code:** [`src/db.py`](src/db.py), [`scripts/build_database.py`](scripts/build_database.py)
+
+Live predictions need each player's *current* state (Elo and form including their most recent
+match), not the pre-match values used for training. [`src/features/snapshot.py`](src/features/snapshot.py)
+computes that state by reusing the training-time Elo walk and rolling-stat code, and
+`build_database.py` stores it in SQLite:
+
+| Table | Rows | Contents |
+|---|---|---|
+| `players` | 1,777 | Latest rank, age, hand, country, last match date |
+| `player_surface_stats` | 3,550 | Current Elo (plus the date it was last updated) and 10/20/50-match form, per surface |
+| `matches` | 47,397 | Slim match history (date, surface, winner, loser) for head-to-head lookups |
+
+Primary and foreign keys are enforced, and an index on `(winner_id, loser_id)` turns a
+head-to-head lookup into an index search instead of a full-table scan. The database is a cache
+that can always be rebuilt from the CSVs: the script builds into a temporary file and atomically
+swaps it into place, so a running API never reads a half-built database.
+
+## API
+
+**Code:** [`api/main.py`](api/main.py), [`api/schemas.py`](api/schemas.py), [`src/prediction.py`](src/prediction.py)
+
+| Endpoint | Returns |
+|---|---|
+| `GET /players?q=sinn` | Name search, best-ranked first |
+| `GET /players/{player_id}` | Profile plus current Elo and form on each surface |
+| `GET /predict?player1_id=…&player2_id=…&surface=Hard&best_of=3` | Win probability, Elo-implied probability, surface head-to-head, and a scoreline breakdown |
+
+`/predict` rebuilds the exact 62-column feature row the LightGBM model was trained on from each
+player's stored state:
+
+- **Elo decay up to the prediction date.** Stored ratings are decayed with the same half-life
+  formula used during training. Predictions are made as of the latest match in the data, not
+  the wall-clock date, so a stale dataset doesn't make every player look inactive.
+- **Order-independent probabilities.** The model is scored with each player as `player_1` and
+  the two results are averaged. Without this, swapping the order of the same two players shifts
+  the model's answer by 3.9 percentage points on average (up to 21) across recent matches.
+  Averaging guarantees P(A beats B) + P(B beats A) = 1.
+- **Match context.** Tournament-level features a hypothetical matchup doesn't have are filled
+  with the most common values for the chosen format (best-of-5: Grand Slam; best-of-3: Masters).
+- **Scoreline breakdown.** Each player's point-on-serve probability against this specific
+  opponent (average of the server's serve-point win rate and the rate the returner concedes)
+  feeds the Markov engine (hold, set, and match probabilities) and 5,000 Monte Carlo
+  simulations (straight sets, going the distance, exact set-score distribution). Its match
+  probability comes from a separate model than the headline LightGBM number, and the two
+  typically land within a few points of each other.
+
+Invalid input returns 4xx errors with specific messages (422 for bad parameters, 404 for an
+unknown player, 400 for the same player twice). A request takes about 0.3 s, most of it Monte
+Carlo simulation.
+
+**Run it:**
+
+```bash
+./.venv/bin/python src/data_loader.py          # raw CSVs -> processed dataset
+./.venv/bin/python scripts/train_models.py     # -> models/*.joblib
+./.venv/bin/python scripts/build_database.py   # -> data/tennis.db
+./.venv/bin/python -m uvicorn api.main:app --reload
+```
+
+Interactive docs at `http://127.0.0.1:8000/docs`.
+
 ## Setup
 
 ```bash
@@ -186,7 +251,6 @@ Python 3.12. Always use `./.venv/bin/python`, not a bare `python3`.
 
 ## Roadmap
 
-- FastAPI backend + SQLite storage
 - Benchmark against bookmaker-implied probabilities (tennis-data.co.uk odds)
 - pytest coverage for the Markov engine and core pipeline functions
 - React frontend

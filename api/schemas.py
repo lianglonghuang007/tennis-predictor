@@ -22,7 +22,7 @@ class SurfaceStats(BaseModel):
     player has no matches with recorded serve stats on that surface."""
 
     surface: str
-    elo: float
+    elo: float  # decayed toward 1500 for time since the player's last match on this surface
     serve_win_pct_last10: float | None
     serve_win_pct_last20: float | None
     serve_win_pct_last50: float | None
@@ -45,3 +45,42 @@ class PlayerDetail(PlayerSummary):
     age: float | None
     rank_points: float | None
     surfaces: list[SurfaceStats]
+
+
+class MatchBreakdown(BaseModel):
+    """Scoreline detail from the point-level engines, driven by each player's serve/return form.
+
+    Its match win probability comes from a different model than the headline
+    LightGBM number, so the two won't match exactly.
+    """
+
+    player_1_serve_point_prob: float
+    player_2_serve_point_prob: float
+    player_1_hold_prob: float
+    player_2_hold_prob: float
+    player_1_set_win_prob: float
+    player_1_match_win_prob: float
+    straight_sets_prob: float
+    went_the_distance_prob: float
+    set_score_probs: dict[str, float]
+
+
+class HeadToHead(BaseModel):
+    """Past results between the two players on the requested surface."""
+
+    player_1_wins: int
+    player_2_wins: int
+
+
+class Prediction(BaseModel):
+    player_1: PlayerSummary
+    player_2: PlayerSummary
+    surface: str
+    best_of: int
+    as_of: str
+    player_1_win_prob: float
+    elo_win_prob: float
+    player_1_elo: float
+    player_2_elo: float
+    head_to_head: HeadToHead
+    breakdown: MatchBreakdown | None
